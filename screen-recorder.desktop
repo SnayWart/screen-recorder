@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Screen Recorder
+Name[ru]=Экранный рекордер
+Comment=High-performance CPU-optimized Wayland screen recorder
+Comment[ru]=Высокопроизводительный оптимизированный экранный рекордер для Wayland
+Exec=screen-recorder
+Icon=media-record
+Terminal=false
+Type=Application
+Categories=AudioVideo;Recorder;Video;
+Keywords=record;screen;screencast;capture;video;wayland;
+StartupNotify=true
