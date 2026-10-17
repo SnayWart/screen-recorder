@@ -47,7 +47,7 @@ $(TARGET): $(OBJS)
 install: all
 	@mkdir -p $(BINDIR) $(APPDIR)
 	install -m 755 $(TARGET) $(BINDIR)/screen-recorder
-	install -m 644 screen-recorder.desktop $(APPDIR)/screen-recorder.desktop
+	sed 's|^Exec=.*|Exec=$(BINDIR)/screen-recorder|' screen-recorder.desktop > $(APPDIR)/screen-recorder.desktop
 
 uninstall:
 	rm -f $(BINDIR)/screen-recorder
