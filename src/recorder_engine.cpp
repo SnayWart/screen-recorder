@@ -1,4 +1,5 @@
 #include "recorder_engine.h"
+#include "thread_utils.h"
 #include <sys/resource.h>
 
 RecorderEngine::RecorderEngine() {
@@ -104,12 +105,12 @@ void RecorderEngine::stop() {
 }
 
 void RecorderEngine::video_encode_worker() {
-    setpriority(PRIO_PROCESS, 0, 10);
+    set_background_thread_affinity_and_priority();
     std::shared_ptr<CapturedFrame> cf;
     while (!stop_requested_) {
         if (wayland_cap_ && wayland_cap_->pop_frame(cf, 50)) {
             frames_captured_count_++;
-            encoder_->encode_video_frame(cf->data.data(), cf->stride,
+            encoder_->encode_video_frame(cf->data, cf->stride,
                                          cf->timestamp_us, cf->y_invert);
             frames_encoded_count_++;
             wayland_cap_->release_frame(cf);
@@ -117,7 +118,7 @@ void RecorderEngine::video_encode_worker() {
     }
     while (wayland_cap_ && wayland_cap_->pop_frame(cf, 10)) {
         frames_captured_count_++;
-        encoder_->encode_video_frame(cf->data.data(), cf->stride,
+        encoder_->encode_video_frame(cf->data, cf->stride,
                                      cf->timestamp_us, cf->y_invert);
         frames_encoded_count_++;
         wayland_cap_->release_frame(cf);
@@ -125,7 +126,7 @@ void RecorderEngine::video_encode_worker() {
 }
 
 void RecorderEngine::audio_encode_worker() {
-    setpriority(PRIO_PROCESS, 0, 10);
+    set_background_thread_affinity_and_priority();
     std::vector<int16_t> samples;
     while (!stop_requested_) {
         if (audio_cap_ && audio_cap_->pop_samples(samples, 50)) {

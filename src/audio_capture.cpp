@@ -1,4 +1,5 @@
 #include "audio_capture.h"
+#include "thread_utils.h"
 #include <pulse/error.h>
 #include <cstdio>
 #include <array>
@@ -126,6 +127,7 @@ void AudioCapture::stop() {
 }
 
 void AudioCapture::capture_thread_func() {
+    set_background_thread_affinity_and_priority();
     const size_t frames_per_read = 1024;
     const size_t samples_count = frames_per_read * config_.channels;
     const size_t bytes_to_read = samples_count * sizeof(int16_t);

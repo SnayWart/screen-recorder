@@ -1,4 +1,5 @@
 #include "wayland_capture.h"
+#include "thread_utils.h"
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cstring>
@@ -125,8 +126,9 @@ bool WaylandCapture::setup_wayland() {
 }
 
 void WaylandCapture::cleanup_wayland() {
-    free_shm_buffer(buffers_[0]);
-    free_shm_buffer(buffers_[1]);
+    for (size_t i = 0; i < kBufferPoolSize; ++i) {
+        free_shm_buffer(buffers_[i]);
+    }
 
     if (output_) {
         wl_output_destroy(output_);
@@ -216,22 +218,22 @@ bool WaylandCapture::init(CaptureMode mode, RegionRect region, int target_fps) {
         return false;
     }
 
-    if (!allocate_shm_buffer(buffers_[0], width_, height_, stride_, format_)) {
-        return false;
-    }
-    if (!allocate_shm_buffer(buffers_[1], width_, height_, stride_, format_)) {
-        return false;
+    for (size_t i = 0; i < kBufferPoolSize; ++i) {
+        if (!allocate_shm_buffer(buffers_[i], width_, height_, stride_, format_)) {
+            return false;
+        }
     }
 
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
+        free_buffer_indices_.clear();
         free_frames_.clear();
         while (!frame_queue_.empty()) {
             frame_queue_.pop();
         }
-        for (size_t i = 0; i < pool_size_; ++i) {
+        for (size_t i = 0; i < kBufferPoolSize; ++i) {
+            free_buffer_indices_.push_back(static_cast<int>(i));
             auto cf = std::make_shared<CapturedFrame>();
-            cf->data.resize(buffers_[0].size);
             free_frames_.push_back(cf);
         }
     }
@@ -264,10 +266,16 @@ void WaylandCapture::release_frame(std::shared_ptr<CapturedFrame> frame) {
         return;
     }
     std::lock_guard<std::mutex> lock(queue_mutex_);
+    if (frame->buffer_idx >= 0) {
+        free_buffer_indices_.push_back(frame->buffer_idx);
+        frame->buffer_idx = -1;
+        frame->data = nullptr;
+    }
     free_frames_.push_back(frame);
 }
 
 void WaylandCapture::capture_loop() {
+    set_background_thread_affinity_and_priority();
     const int64_t frame_interval_us = 1000000 / target_fps_;
     auto next_frame_time = std::chrono::steady_clock::now();
 
@@ -280,6 +288,18 @@ void WaylandCapture::capture_loop() {
         now = std::chrono::steady_clock::now();
         if (next_frame_time < now) {
             next_frame_time = now + std::chrono::microseconds(frame_interval_us);
+        }
+
+        int buf_idx = -1;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            if (!free_buffer_indices_.empty()) {
+                buf_idx = free_buffer_indices_.back();
+                free_buffer_indices_.pop_back();
+            }
+        }
+        if (buf_idx < 0) {
+            continue;
         }
 
         frame_ready_ = false;
@@ -296,6 +316,10 @@ void WaylandCapture::capture_loop() {
         }
 
         if (!frame) {
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
+                free_buffer_indices_.push_back(buf_idx);
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }
@@ -310,11 +334,12 @@ void WaylandCapture::capture_loop() {
 
         if (!is_running_) {
             zwlr_screencopy_frame_v1_destroy(frame);
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            free_buffer_indices_.push_back(buf_idx);
             break;
         }
 
-        current_buffer_idx_ = 1 - current_buffer_idx_;
-        ShmBuffer &cur_buf = buffers_[current_buffer_idx_];
+        ShmBuffer &cur_buf = buffers_[buf_idx];
 
         zwlr_screencopy_frame_v1_copy(frame, cur_buf.wl_buf);
         wl_display_flush(display_);
@@ -335,14 +360,13 @@ void WaylandCapture::capture_loop() {
                 if (!free_frames_.empty()) {
                     cf = free_frames_.back();
                     free_frames_.pop_back();
-                } else if (!frame_queue_.empty()) {
-                    cf = frame_queue_.front();
-                    frame_queue_.pop();
                 }
             }
 
             if (cf) {
-                std::memcpy(cf->data.data(), cur_buf.data, cur_buf.size);
+                cf->buffer_idx = buf_idx;
+                cf->data = static_cast<uint8_t*>(cur_buf.data);
+                cf->size = cur_buf.size;
                 cf->timestamp_us = ts;
                 cf->width = width_;
                 cf->height = height_;
@@ -355,7 +379,13 @@ void WaylandCapture::capture_loop() {
                     frame_queue_.push(cf);
                 }
                 queue_cv_.notify_one();
+            } else {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
+                free_buffer_indices_.push_back(buf_idx);
             }
+        } else {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            free_buffer_indices_.push_back(buf_idx);
         }
 
         zwlr_screencopy_frame_v1_destroy(frame);

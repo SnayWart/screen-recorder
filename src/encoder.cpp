@@ -88,7 +88,7 @@ bool MediaEncoder::init_video(int width, int height, int fps, int crf, const std
     video_codec_ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
     video_codec_ctx_->gop_size = fps * 2;
     video_codec_ctx_->max_b_frames = 0;
-    video_codec_ctx_->thread_count = 3;
+    video_codec_ctx_->thread_count = (fps <= 60) ? 2 : 3;
 
     av_opt_set(video_codec_ctx_->priv_data, "preset", preset.c_str(), 0);
     av_opt_set(video_codec_ctx_->priv_data, "tune", "zerolatency", 0);
@@ -119,9 +119,10 @@ bool MediaEncoder::init_video(int width, int height, int fps, int crf, const std
         return false;
     }
 
+    int sws_flags = (crf <= 18) ? SWS_BICUBIC : SWS_FAST_BILINEAR;
     sws_ctx_ = sws_getContext(width, height, AV_PIX_FMT_BGR0,
                               enc_w, enc_h, AV_PIX_FMT_YUV420P,
-                              SWS_BICUBIC, nullptr, nullptr, nullptr);
+                              sws_flags, nullptr, nullptr, nullptr);
     if (!sws_ctx_) {
         return false;
     }

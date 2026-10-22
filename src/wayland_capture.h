@@ -13,7 +13,9 @@
 #include "screencopy_protocol.h"
 
 struct CapturedFrame {
-    std::vector<uint8_t> data;
+    int buffer_idx = -1;
+    uint8_t *data = nullptr;
+    size_t size = 0;
     int64_t timestamp_us = 0;
     uint32_t width = 0;
     uint32_t height = 0;
@@ -79,8 +81,9 @@ private:
     std::atomic<bool> frame_ready_{false};
     std::atomic<bool> frame_failed_{false};
 
-    ShmBuffer buffers_[2];
-    int current_buffer_idx_{0};
+    static constexpr size_t kBufferPoolSize = 6;
+    ShmBuffer buffers_[kBufferPoolSize];
+    std::vector<int> free_buffer_indices_;
 
     std::atomic<bool> is_running_{false};
     std::thread capture_thread_;
@@ -89,7 +92,6 @@ private:
     std::queue<std::shared_ptr<CapturedFrame>> frame_queue_;
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
-    const size_t pool_size_{12};
 };
 
 #endif
